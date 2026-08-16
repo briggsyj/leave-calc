@@ -1,0 +1,15 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+zig-pkg/
+
+# Object/debug files
+*.o
+*.obj
+*.pdb
+
+# Editor/OS
+.vscode/
+.vs/
+.DS_Store
+Thumbs.db

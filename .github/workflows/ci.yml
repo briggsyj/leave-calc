@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  # Full app build + tests. Windows because that's the target platform and
+  # zig's bundled mingw toolchain links raylib's GDI/OpenGL deps with no
+  # extra system packages required.
+  build-windows:
+    name: Build & test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Build app
+        run: zig build
+
+  # calc.zig has no GUI dependencies, so its tests can run cross-platform
+  # without installing raylib's Linux windowing/OpenGL dev packages.
+  test-logic-linux:
+    name: Test pure logic (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
