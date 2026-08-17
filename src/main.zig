@@ -19,8 +19,31 @@ const window_height = 440;
 const leave_main_label = "Leave Main";
 const leave_alt_label = "Leave Alt";
 
-/// A plain system sans-serif, used instead of raylib's blocky bitmap default.
-const sans_serif_font_path = "C:/Windows/Fonts/segoeui.ttf";
+/// Plain system sans-serif candidates, used instead of raylib's blocky
+/// bitmap default. Tried in order per-platform; the first one that loads
+/// wins, with raylib's built-in font as the final fallback.
+const sans_serif_font_paths: []const [:0]const u8 = switch (@import("builtin").os.tag) {
+    .windows => &.{"C:/Windows/Fonts/segoeui.ttf"},
+    .macos => &.{
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+    },
+    else => &.{
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    },
+};
+
+/// Try each candidate system font path in turn, returning the first that
+/// loads successfully, or raylib's built-in default font otherwise.
+fn loadSansSerifFont() rl.Font {
+    for (sans_serif_font_paths) |path| {
+        if (rl.loadFontEx(path, 26, null)) |font| {
+            return font;
+        } else |_| {}
+    }
+    return rl.getFontDefault() catch unreachable;
+}
 
 /// Fixed-capacity text buffer backing raygui's editable text boxes.
 /// raygui edits this in place as a null-terminated C string.
@@ -103,8 +126,7 @@ pub fn main() anyerror!void {
     // built-in bitmap font; fall back to the default if unavailable. Baked
     // close to our actual on-screen text sizes (16-20px) so it isn't
     // minified so hard that it turns blurry/sub-pixel.
-    const font: rl.Font = rl.loadFontEx(sans_serif_font_path, 26, null) catch
-        (rl.getFontDefault() catch unreachable);
+    const font: rl.Font = loadSansSerifFont();
     defer if (rl.isFontValid(font)) rl.unloadFont(font);
     rl.setTextureFilter(font.texture, .bilinear);
     rg.setFont(font);
