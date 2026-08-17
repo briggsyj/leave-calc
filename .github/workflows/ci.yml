@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Full app build + tests. Windows because that's the target platform and
-  # zig's bundled mingw toolchain links raylib's GDI/OpenGL deps with no
-  # extra system packages required.
-  build-windows:
+  # zig's bundled mingw toolchain links raylib's GDI/OpenGL deps for both
+  # Windows arches from this one host, with no extra system packages
+  # required.
+  windows:
     name: Build & test (Windows)
     runs-on: windows-latest
     steps:
@@ -23,14 +23,18 @@ jobs:
       - name: Run unit tests
         run: zig build test
 
-      - name: Build app
+      - name: Build app (native)
         run: zig build
 
-  # calc.zig has no GUI dependencies, so its tests can run cross-platform
-  # without installing raylib's Linux windowing/OpenGL dev packages.
-  test-logic-linux:
-    name: Test pure logic (Linux)
-    runs-on: ubuntu-latest
+      - name: Cross-compile release executables (amd64 + arm64)
+        run: zig build release-windows -Doptimize=ReleaseFast
+
+  # The xcode_frameworks stub package (see build.zig) links raylib's
+  # Cocoa/IOKit deps for both macOS arches from this one host, with no
+  # Xcode project or extra system packages required.
+  macos:
+    name: Build & test (macOS)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -40,3 +44,40 @@ jobs:
 
       - name: Run unit tests
         run: zig build test
+
+      - name: Build app (native)
+        run: zig build
+
+      - name: Cross-compile release executables (amd64 + arm64)
+        run: zig build release-macos -Doptimize=ReleaseFast
+
+  # Unlike Windows/macOS, raylib links real X11/OpenGL .so files on Linux,
+  # so (unlike the jobs above) each arch has to build natively on a
+  # matching host with that arch's dev packages installed.
+  linux:
+    name: Build & test (Linux ${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install raylib's X11/OpenGL dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxi-dev libxcursor-dev
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Build release executable (native arch)
+        run: zig build release -Doptimize=ReleaseFast

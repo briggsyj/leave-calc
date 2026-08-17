@@ -1,10 +1,10 @@
 //! Annual Leave Usage Calculator — GUI entry point.
 //!
-//! Renders a small form (hours/day, days) and, on Calculate, computes total
-//! annual leave hours and an adjustable split between the two leave types
-//! ("Leave Main" / "Leave Alt") using the pure functions in `calc.zig`. GUI
-//! code stays a thin shell around that logic: all the arithmetic and
-//! validation is unit-tested independently.
+//! Renders a small form (hours/day, days) that recomputes an adjustable
+//! split between two leave shares live, as soon as both fields hold valid
+//! input, using the pure functions in `calc.zig`. GUI code stays a thin
+//! shell around that logic: all the arithmetic and validation is
+//! unit-tested independently.
 
 const std = @import("std");
 const rl = @import("raylib");
@@ -13,11 +13,6 @@ const calc = @import("calc");
 
 const window_width = 480;
 const window_height = 440;
-
-/// Display names for the two leave categories `calc.SplitResult` produces
-/// (`.planned` / `.buffer` in the pure-logic layer are generic on purpose).
-const leave_main_label = "Leave Main";
-const leave_alt_label = "Leave Alt";
 
 /// Plain system sans-serif candidates, used instead of raylib's blocky
 /// bitmap default. Tried in order per-platform; the first one that loads
@@ -83,19 +78,15 @@ const AppState = struct {
         self.* = .{};
     }
 
-    /// Validate both fields and (re)compute the split, or set an error
-    /// message describing the first problem found.
+    /// Validate both fields (assumed non-empty; see the caller in `main`)
+    /// and (re)compute the split, or set an error message describing the
+    /// first problem found.
     fn calculate(self: *AppState) void {
         self.error_msg = null;
         self.result = null;
 
         const hours_text = currentText(&self.hours_buf);
         const days_text = currentText(&self.days_buf);
-
-        if (hours_text.len == 0 or days_text.len == 0) {
-            self.error_msg = "Enter both hours per day and number of days.";
-            return;
-        }
 
         const hours = calc.parsePositive(hours_text) catch |err| {
             self.error_msg = switch (err) {
@@ -141,10 +132,11 @@ pub fn main() anyerror!void {
     // Static layout — laid out once, referenced every frame.
     const hours_box = rl.Rectangle.init(190, 60, 220, 30);
     const days_box = rl.Rectangle.init(190, 110, 220, 30);
-    const calc_btn = rl.Rectangle.init(30, 160, 130, 34);
-    const reset_btn = rl.Rectangle.init(170, 160, 130, 34);
-    const copy_btn = rl.Rectangle.init(310, 160, 140, 34);
+    const reset_btn = rl.Rectangle.init(30, 160, 130, 34);
     const ratio_slider = rl.Rectangle.init(190, 222, 220, 20);
+    const planned_box = rl.Rectangle.init(30, 278, 195, 36);
+    const buffer_box = rl.Rectangle.init(235, 278, 195, 36);
+    const copy_btn = rl.Rectangle.init(30, 328, 170, 34);
 
     while (!rl.windowShouldClose()) {
         // --- Input handling ---------------------------------------------
@@ -155,29 +147,25 @@ pub fn main() anyerror!void {
             state.days_edit = !state.days_edit;
         }
 
-        if (rg.button(calc_btn, "Calculate")) {
-            state.calculate();
-        }
         if (rg.button(reset_btn, "Reset")) {
             state.reset();
         }
-        if (rg.button(copy_btn, "Copy Results")) {
-            if (state.result) |r| {
-                const z = std.fmt.bufPrintZ(
-                    &text_buf,
-                    "Total: {d:.2}h  " ++ leave_main_label ++ ": {d:.2}h  " ++ leave_alt_label ++ ": {d:.2}h",
-                    .{ r.total, r.planned, r.buffer },
-                ) catch "";
-                rl.setClipboardText(z);
-                state.copied_flash = 1.5;
-            }
-        }
 
         var ratio_value = state.planned_ratio;
-        _ = rg.slider(ratio_slider, "0%", "100%", &ratio_value, 0.0, 1.0);
-        if (ratio_value != state.planned_ratio) {
-            state.planned_ratio = ratio_value;
-            if (state.result != null) state.calculate();
+        var left_pct_buf: [8:0]u8 = undefined;
+        var right_pct_buf: [8:0]u8 = undefined;
+        const left_pct = std.fmt.bufPrintZ(&left_pct_buf, "{d:.0}%", .{state.planned_ratio * 100.0}) catch "";
+        const right_pct = std.fmt.bufPrintZ(&right_pct_buf, "{d:.0}%", .{(1.0 - state.planned_ratio) * 100.0}) catch "";
+        _ = rg.slider(ratio_slider, left_pct, right_pct, &ratio_value, 0.0, 1.0);
+        state.planned_ratio = ratio_value;
+
+        // Recompute live: as soon as both fields hold something, and every
+        // time either they or the split slider change.
+        if (currentText(&state.hours_buf).len > 0 and currentText(&state.days_buf).len > 0) {
+            state.calculate();
+        } else {
+            state.result = null;
+            state.error_msg = null;
         }
 
         if (state.copied_flash > 0) state.copied_flash -= rl.getFrameTime();
@@ -193,45 +181,41 @@ pub fn main() anyerror!void {
         _ = rg.label(rl.Rectangle.init(30, 65, 150, 24), "Hours per day:");
         _ = rg.label(rl.Rectangle.init(30, 115, 150, 24), "Number of days:");
 
-        const ratio_label = std.fmt.bufPrintZ(
-            &text_buf,
-            leave_main_label ++ " / " ++ leave_alt_label ++ " split: {d:.0}% / {d:.0}%",
-            .{ state.planned_ratio * 100.0, (1.0 - state.planned_ratio) * 100.0 },
-        ) catch leave_main_label ++ " / " ++ leave_alt_label ++ " split";
-        drawText(font, ratio_label, 30, 248, 18, .dark_gray);
-
-        rl.drawLine(30, 282, 450, 282, .light_gray);
+        rl.drawLine(30, 260, 450, 260, .light_gray);
 
         if (state.error_msg) |msg| {
             var err_buf: [96]u8 = undefined;
             const z = std.fmt.bufPrintZ(&err_buf, "{s}", .{msg}) catch "Invalid input.";
-            drawText(font, z, 30, 300, 18, .red);
+            drawText(font, z, 30, 278, 18, .red);
         } else if (state.result) |r| {
-            var total_buf: [64]u8 = undefined;
-            const total_text = std.fmt.bufPrintZ(&total_buf, "Total leave hours: {d:.2}", .{r.total}) catch "";
-            drawText(font, total_text, 30, 300, 20, .black);
+            const planned_pct = state.planned_ratio * 100.0;
+            const buffer_pct = (1.0 - state.planned_ratio) * 100.0;
 
+            rl.drawRectangleLinesEx(planned_box, 1, .gray);
             var planned_buf: [64]u8 = undefined;
-            const planned_text = std.fmt.bufPrintZ(
-                &planned_buf,
-                leave_main_label ++ " ({d:.0}%): {d:.2} h",
-                .{ state.planned_ratio * 100.0, r.planned },
-            ) catch "";
-            drawText(font, planned_text, 30, 330, 20, .green);
+            const planned_text = std.fmt.bufPrintZ(&planned_buf, "{d:.2} h", .{r.planned}) catch "";
+            drawText(font, planned_text, planned_box.x + 12, planned_box.y + 8, 20, .gray);
 
+            rl.drawRectangleLinesEx(buffer_box, 1, .gray);
             var buffer_buf: [64]u8 = undefined;
-            const buffer_text = std.fmt.bufPrintZ(
-                &buffer_buf,
-                leave_alt_label ++ " ({d:.0}%): {d:.2} h",
-                .{ (1.0 - state.planned_ratio) * 100.0, r.buffer },
-            ) catch "";
-            drawText(font, buffer_text, 30, 360, 20, .orange);
+            const buffer_text = std.fmt.bufPrintZ(&buffer_buf, "{d:.2} h", .{r.buffer}) catch "";
+            drawText(font, buffer_text, buffer_box.x + 12, buffer_box.y + 8, 20, .gray);
+
+            if (rg.button(copy_btn, "Copy Results")) {
+                const z = std.fmt.bufPrintZ(
+                    &text_buf,
+                    "total_hours,{d:.0}%_hours,{d:.0}%_hours\n{d:.2},{d:.2},{d:.2}",
+                    .{ planned_pct, buffer_pct, r.total, r.planned, r.buffer },
+                ) catch "";
+                rl.setClipboardText(z);
+                state.copied_flash = 1.5;
+            }
 
             if (state.copied_flash > 0) {
-                drawText(font, "Copied to clipboard!", 30, 395, 16, .gray);
+                drawText(font, "Copied to clipboard!", copy_btn.x + copy_btn.width + 15, copy_btn.y + 9, 16, .gray);
             }
         } else {
-            drawText(font, "Enter values and press Calculate.", 30, 300, 18, .gray);
+            drawText(font, "Enter hours per day and number of days above.", 30, 278, 18, .gray);
         }
     }
 }

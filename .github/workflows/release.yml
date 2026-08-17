@@ -1,0 +1,111 @@
+name: Release
+
+# Runs when a GitHub Release is published: re-runs the test suite, builds
+# every platform/arch executable (see ci.yml for why each is split the way
+# it is), and attaches them to that release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Release build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Cross-compile release executables (amd64 + arm64)
+        run: zig build release-windows -Doptimize=ReleaseFast
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Get-ChildItem zig-out/release | ForEach-Object {
+            Compress-Archive -Path "$($_.FullName)/*" -DestinationPath "leave-calc-$($_.Name).zip"
+          }
+
+      - name: Upload to release
+        shell: bash
+        run: gh release upload "${{ github.event.release.tag_name }}" leave-calc-*.zip --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  macos:
+    name: Release build (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Cross-compile release executables (amd64 + arm64)
+        run: zig build release-macos -Doptimize=ReleaseFast
+
+      - name: Package
+        run: |
+          cd zig-out/release
+          for dir in */; do
+            name="${dir%/}"
+            tar -C "$name" -czf "../../leave-calc-${name}.tar.gz" .
+          done
+
+      - name: Upload to release
+        run: gh release upload "${{ github.event.release.tag_name }}" leave-calc-*.tar.gz --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  linux:
+    name: Release build (Linux ${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install raylib's X11/OpenGL dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxi-dev libxcursor-dev
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Build release executable (native arch)
+        run: zig build release -Doptimize=ReleaseFast
+
+      - name: Package
+        run: |
+          cd zig-out/release
+          for dir in */; do
+            name="${dir%/}"
+            tar -C "$name" -czf "../../leave-calc-${name}.tar.gz" .
+          done
+
+      - name: Upload to release
+        run: gh release upload "${{ github.event.release.tag_name }}" leave-calc-*.tar.gz --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
